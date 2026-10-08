@@ -1,10 +1,12 @@
 # JESCO 电商发票助手
 
-正式版本：0.5.14
+正式版本：0.5.15
 
 ## 安装与更新
 
 打开 **[官方安装页](https://jescod111.github.io/jesco-invoice-assistant/)**，先安装 Tampermonkey，再点击“安装 / 更新助手”。无需复制代码，也无需 GitHub 账号。
+
+[安装 / 更新助手](https://jescod111.github.io/jesco-invoice-assistant/invoice-automation.user.js)
 
 现有用户请在原浏览器中更新，不要先删除旧脚本；确认名称是“JESCO 电商发票助手”，避免重复安装。更新后结束当前任务再刷新业务页面。更新不清空订单池和国家映射。
 
@@ -20,14 +22,14 @@ FashionPO、PFS 订单扫描、客户核验及 Fatture in Cloud 发票辅助填�
 
 ## 发布说明
 
-0.5.14：新增官方安装与自动更新地址；不改变订单扫描或发票填写业务逻辑。正式文件由通过测试的源文件直接生成，避免聊天复制损坏代码。
+0.5.15：正式下载与更新文件名统一为 invoice-automation，不含平台名称。旧链接继续提供同一新版，兼容已安装脚本；不改变订单扫描或发票填写业务逻辑。正式文件由通过测试的源文件直接生成，避免聊天复制损坏代码。
 
 这里只发布已验证的正式版本，开发中的文件不自动发布。历史版本可从 GitHub 提交记录查看。
 
 ## 文件完整性
 
-文件：fashionpo-fattureincloud.user.js
+文件：invoice-automation.user.js
 
-SHA-256：`4c3c4b2aeeedc5123dd0d264df5d0deb10b2dda1e9d44f9ed43191b05b8fc58f`
+SHA-256：`7ac7a53d9d0d081a3471e3857676e6dbe35c8baaf406af0161fd5299e8788c87`
 
 [校验清单](https://jescod111.github.io/jesco-invoice-assistant/release.json)
