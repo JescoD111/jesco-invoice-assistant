@@ -1,9 +1,9 @@
 {
-  "version": "0.5.15",
+  "version": "0.5.16",
   "channel": "stable",
   "file": "invoice-automation.user.js",
-  "sha256": "7ac7a53d9d0d081a3471e3857676e6dbe35c8baaf406af0161fd5299e8788c87",
-  "bytes": 117828,
+  "sha256": "b0f85315738d3e928548b9c27592a69b683c474e91eb4c6611da6305f2dc0239",
+  "bytes": 123156,
   "downloadUrl": "https://jescod111.github.io/jesco-invoice-assistant/invoice-automation.user.js",
   "updateUrl": "https://jescod111.github.io/jesco-invoice-assistant/invoice-automation.meta.js",
   "legacyDownloadUrl": "https://jescod111.github.io/jesco-invoice-assistant/fashionpo-fattureincloud.user.js",

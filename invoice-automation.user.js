@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JESCO 电商发票助手
 // @namespace    https://jesco.local/
-// @version      0.5.15
+// @version      0.5.16
 // @homepageURL  https://jescod111.github.io/jesco-invoice-assistant/
 // @updateURL    https://jescod111.github.io/jesco-invoice-assistant/invoice-automation.meta.js
 // @downloadURL  https://jescod111.github.io/jesco-invoice-assistant/invoice-automation.user.js
@@ -23,6 +23,7 @@
 
   const STORAGE_KEY = 'jesco_fashionpo_invoice_batch_v1';
   const COUNTRY_MAPPING_KEY = 'jesco_country_mapping_v1';
+  const PRODUCT_MAPPING_KEY = 'jesco_product_template_mapping_v1';
   const PANEL_ENABLED_KEY = 'jesco_invoice_assistant_enabled_v1';
   const FINALIZATION_SESSION_KEY = 'jesco_invoice_finalization_session_v1';
   const PANEL_ID = 'jesco-invoice-assistant';
@@ -44,7 +45,7 @@
   const WAIT_POLL_INTERVAL = 200;
   const FASHIONPO_SCAN_CONCURRENCY = 4;
   const SCAN_PROGRESS_UPDATE_INTERVAL = 400;
-  // 按订单商品名的第一个词匹配；新增类别只需维护此表。
+  // 按订单商品名的第一个词匹配；未知类别由员工选择并保存在独立映射中。
   // SHORT 的模板 Categoria 本身是 PANTALONE，选择后不得覆盖。
   const PRODUCT_TEMPLATES = Object.freeze([
     { code: '01A', name: 'ABITO', category: 'ABITO', aliases: ['ABITO', 'ABITI', 'VESTITO', 'VESTITI', 'DRESS', 'DRESSES'] },
@@ -57,6 +58,7 @@
   ]);
   const INVOICE_ACTIVE_PHASES = new Set([
     'invoice_filling',
+    'waiting_product_mapping',
     'waiting_before_finalize',
     'finalizing',
     'opening_next_invoice',
@@ -80,6 +82,7 @@
     finalizingToken: null,
     pendingCountrySource: null,
     pendingCountryInitialOption: null,
+    pendingProductMapping: null,
     updatedAt: null,
   });
 
@@ -282,13 +285,76 @@
     return clean(value).split(/\s+/)[0] || '';
   }
 
+  function productCategoryKey(value) {
+    return invoiceProductName(value).normalize('NFKC').toUpperCase();
+  }
+
+  function loadLearnedProductMappings() {
+    const saved = GM_getValue(PRODUCT_MAPPING_KEY, {});
+    return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+  }
+
+  function findProductTemplate(item) {
+    const category = productCategoryKey(item.name);
+    const builtin = PRODUCT_TEMPLATES.find((entry) => entry.aliases.includes(category));
+    if (builtin) return builtin;
+    const learned = loadLearnedProductMappings();
+    const code = Object.prototype.hasOwnProperty.call(learned, category) ? learned[category] : null;
+    return PRODUCT_TEMPLATES.find((entry) => entry.code === code) || null;
+  }
+
   function productTemplateFor(item) {
-    const category = invoiceProductName(item.name).toUpperCase();
-    const template = PRODUCT_TEMPLATES.find((entry) => entry.aliases.includes(category));
+    const category = productCategoryKey(item.name);
+    const template = findProductTemplate(item);
     if (!template) {
       throw new Error(`商品类别 ${category || '[空]'} 未配置 Codice 映射（货号 ${item.code}），请补充映射后重试`);
     }
     return template;
+  }
+
+  function rememberProductMapping(category, templateCode) {
+    const source = productCategoryKey(category);
+    const template = PRODUCT_TEMPLATES.find((entry) => entry.code === templateCode);
+    if (!source || !template) throw new Error('请先选择商品对应的已有类别');
+    const builtin = PRODUCT_TEMPLATES.find((entry) => entry.aliases.includes(source));
+    if (builtin && builtin.code !== template.code) throw new Error('不能覆盖已有固定类别映射');
+    GM_setValue(PRODUCT_MAPPING_KEY, { ...loadLearnedProductMappings(), [source]: template.code });
+  }
+
+  function pauseForProductMapping(order) {
+    for (const item of order.items) {
+      const category = productCategoryKey(item.name);
+      if (!category) throw new Error(`货号 ${item.code} 缺少商品名称，无法选择类别`);
+      if (findProductTemplate(item)) continue;
+      saveState({
+        phase: 'waiting_product_mapping',
+        pendingProductMapping: { token: operationToken(), taskKey: order.taskKey, category, itemCode: clean(item.code) },
+        message: '',
+        error: null,
+      });
+      return true;
+    }
+    return false;
+  }
+
+  async function continueAfterProductMapping(templateCode, expectedPending) {
+    const state = loadState();
+    const pending = state.pendingProductMapping;
+    const order = activeOrders(state)[state.orderIndex];
+    if (location.hostname !== 'secure.fattureincloud.it'
+      || state.phase !== 'waiting_product_mapping' || !pending || !expectedPending
+      || !order || order.taskStatus === 'complete' || order.taskKey !== pending.taskKey
+      || pending.taskKey !== expectedPending.taskKey || pending.category !== expectedPending.category
+      || pending.token !== expectedPending.token
+      || pending.itemCode !== expectedPending.itemCode
+      || !order.items?.some((item) => productCategoryKey(item.name) === pending.category
+        && clean(item.code) === pending.itemCode)) {
+      throw new Error('待归类的商品已改变，请使用当前窗口重新选择');
+    }
+    rememberProductMapping(pending.category, templateCode);
+    saveState({ phase: 'invoice_filling', pendingProductMapping: null, message: '', error: null });
+    // 重新预检本单所有类别；仍有未知项时继续询问，全部明确后才填写网页。
+    await fillCurrentInvoice();
   }
 
   function invoiceComposition(item) {
@@ -2132,6 +2198,8 @@
 
   async function fillCurrentInvoice() {
     const state = loadState();
+    // 防止旧的自动续跑计时器在人工暂停或已填写后重入。
+    if (state.phase !== 'invoice_filling') return;
     const order = activeOrders(state)[state.orderIndex];
     if (!order) {
       saveState({ phase: 'idle', activeOrderKeys: [], customers: [], message: '完成' });
@@ -2141,8 +2209,8 @@
       location.href = `${FIC_ORIGIN}/invoices/new`;
       return;
     }
+    if (pauseForProductMapping(order)) return;
     for (const item of order.items) {
-      productTemplateFor(item);
       invoiceComposition(item);
     }
     await fillInvoiceCustomer(order.customer);
@@ -2176,6 +2244,7 @@
     }
     saveState({
       phase: 'waiting_before_finalize',
+      pendingProductMapping: null,
       message: '',
       error: null,
     });
@@ -2313,6 +2382,7 @@
       phase: 'checking_customers',
       customerIndex: 0,
       orderIndex: 0,
+      pendingProductMapping: null,
       lastInvoiceUrl: null,
       finalizingTaskKey: null,
       finalizingToken: null,
@@ -2389,6 +2459,10 @@
       .review-list { display:grid; gap:7px; }
       .review-list[hidden] { display:none; }
       .review-empty { padding:8px; color:#657086; text-align:center; background:#f7f9fc; border-radius:7px; }
+      .product-mapping { display:grid; gap:8px; padding:10px; background:#fff8e8; border:1px solid #ecd79f; border-radius:8px; }
+      .product-mapping label { font-weight:650; overflow-wrap:anywhere; }
+      .product-mapping select { box-sizing:border-box; width:100%; min-height:36px; padding:6px;
+        border:1px solid #cfd7e4; border-radius:6px; background:#fff; color:#152033; font:inherit; }
       .line { display:grid; grid-template-columns:1fr auto; gap:8px; align-items:center; padding:8px; border:1px solid #e2e7ef; border-radius:8px; }
       .line-main { min-width:0; }
       .line-name { font-weight:650; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -2460,6 +2534,39 @@
       }
     });
     container.appendChild(button);
+    return button;
+  }
+
+  function renderProductMapping(state) {
+    const pending = state.pendingProductMapping;
+    if (!pending) return;
+    const box = document.createElement('div');
+    box.className = 'product-mapping';
+    const label = document.createElement('label');
+    label.htmlFor = 'jesco-product-template-choice';
+    label.textContent = `${pending.category} · 货号 ${pending.itemCode}，归类为：`;
+    const select = document.createElement('select');
+    select.id = label.htmlFor;
+    select.setAttribute('aria-label', `为 ${pending.category} 选择类别`);
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = '请选择已有类别';
+    placeholder.disabled = true;
+    placeholder.selected = true;
+    select.appendChild(placeholder);
+    for (const template of PRODUCT_TEMPLATES) {
+      const option = document.createElement('option');
+      option.value = template.code;
+      option.textContent = `${template.name} (${template.code})`;
+      select.appendChild(option);
+    }
+    box.append(label, select);
+    panelRefs.actions.appendChild(box);
+    const button = actionButton('保存并继续', () => (
+      continueAfterProductMapping(select.value, pending)
+    ), 'primary', box);
+    button.disabled = true;
+    select.addEventListener('change', () => { button.disabled = !select.value || running; });
   }
 
   function renderQuantityReview(state) {
@@ -2628,6 +2735,7 @@
       phase: 'idle',
       pendingCountrySource: null,
       pendingCountryInitialOption: null,
+      pendingProductMapping: null,
       lastInvoiceUrl: null,
       finalizingTaskKey: null,
       finalizingToken: null,
@@ -2721,6 +2829,7 @@
         actionButton(`开始开票 ${readySelected}`, startSecondStage, 'primary');
       }
       if (location.hostname === 'secure.fattureincloud.it') {
+        if (state.phase === 'waiting_product_mapping') renderProductMapping(state);
         if (state.phase === 'checking_customers') actionButton('检查客户', checkCurrentCustomer, 'primary');
         if (state.phase === 'waiting_manual_country') actionButton('继续', continueAfterManualCountry, 'primary');
         if (state.phase === 'waiting_manual_customer_save') {
