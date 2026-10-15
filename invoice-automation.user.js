@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JESCO 电商发票助手
 // @namespace    https://jesco.local/
-// @version      0.5.16
+// @version      0.5.17
 // @homepageURL  https://jescod111.github.io/jesco-invoice-assistant/
 // @updateURL    https://jescod111.github.io/jesco-invoice-assistant/invoice-automation.meta.js
 // @downloadURL  https://jescod111.github.io/jesco-invoice-assistant/invoice-automation.user.js
@@ -924,8 +924,10 @@
   }
 
   function baseCode(value) {
-    const match = clean(value).toUpperCase().match(/^(\d{5})(?:[-_].*)?$/);
-    return match?.[1] ?? null;
+    const code = clean(value).toUpperCase();
+    const match = code.match(/^(\d{5})(?:[-_].*)?$/);
+    // 只有五位数字货号去掉后缀；其他正式货号完整保留，不能截断或只取数字。
+    return match?.[1] ?? (code || null);
   }
 
   function isMediaUrl(value) {
@@ -1005,7 +1007,7 @@
         href: link.getAttribute('href') || '',
       }));
       const rowText = clean(row.textContent).replace(/[]/g, ' ');
-      const codeMatch = rowText.match(/\b(\d{5}(?:[-_][A-Z0-9]+)?|[A-Z]{2}\d{3})\b/i);
+      const codeMatch = rowText.match(/\b(\d{5}(?:[-_][A-Z0-9]+)?|[A-Z]{2}\d{3}(?:[-_][A-Z0-9]+)?)\b/i);
       const priceMatch = rowText.match(/€\s*([\d.,]+)/);
       const quantityMatch = rowText.match(/:\s*(\d+)(?:\s*\/\s*(\d+))?(?=\s*(?:vedi\b|$))/i);
       if (!codeMatch || !priceMatch || !quantityMatch) {
@@ -1422,7 +1424,7 @@
             },
           });
         }
-        if (!baseCode(rawCode)) reviewErrors.push(`PFS货号 ${rawCode || '[空]'} 不是五位数字货号`);
+        if (!baseCode(rawCode)) reviewErrors.push('PFS商品缺少货号');
         if (!name) reviewErrors.push(`PFS货号 ${rawCode || '[空]'} 缺少意大利语商品名`);
         if (!product.composition?.length) reviewErrors.push(`PFS货号 ${rawCode || '[空]'} 缺少成分`);
         if (!madeIn) reviewErrors.push(`PFS货号 ${rawCode || '[空]'} 缺少产地`);
@@ -1515,7 +1517,7 @@
     const reviewErrors = [];
     for (const item of rawItems) {
       if (!item.code) {
-        reviewErrors.push(`货号 ${item.rawCode} 不是五位数字，需人工处理`);
+        reviewErrors.push('商品缺少货号，需人工处理');
       }
     }
     return {
