@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JESCO 电商发票助手
 // @namespace    https://jesco.local/
-// @version      0.5.17
+// @version      0.5.18
 // @homepageURL  https://jescod111.github.io/jesco-invoice-assistant/
 // @updateURL    https://jescod111.github.io/jesco-invoice-assistant/invoice-automation.meta.js
 // @downloadURL  https://jescod111.github.io/jesco-invoice-assistant/invoice-automation.user.js

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JESCO 电商发票助手
 // @namespace    https://jesco.local/
-// @version      0.5.17
+// @version      0.5.18
 // @homepageURL  https://jescod111.github.io/jesco-invoice-assistant/
 // @updateURL    https://jescod111.github.io/jesco-invoice-assistant/invoice-automation.meta.js
 // @downloadURL  https://jescod111.github.io/jesco-invoice-assistant/invoice-automation.user.js
@@ -1254,10 +1254,10 @@
 
   function pfsListOrderEligible(order) {
     return order?.status === 'VALIDATED'
-      && Number(order?.has_invoice ?? 0) === 0;
+      && [0, '0', false].includes(order?.has_invoice);
   }
 
-  async function pfsPendingInvoiceOrders() {
+  async function pfsReadOrderList(filters) {
     const orders = [];
     let page = 1;
     let lastPage = 1;
@@ -1265,15 +1265,40 @@
       const payload = await pfsApiGet('orders/listOrders', {
         page,
         per_page: 50,
-        status: 'VALIDATED',
-        billed: false,
+        ...filters,
       });
-      const rows = Array.isArray(payload?.data) ? payload.data : [];
-      orders.push(...rows.filter(pfsListOrderEligible));
-      lastPage = Math.max(1, Number(payload?.meta?.last_page) || 1);
+      if (!Array.isArray(payload?.data)) throw new Error('PFS订单列表格式异常，未完成核对，请重新扫描');
+      orders.push(...payload.data);
+      lastPage = Number(payload?.meta?.last_page ?? 1);
+      if (!Number.isInteger(lastPage) || lastPage < 1) {
+        throw new Error('PFS订单分页信息异常，未完成核对，请重新扫描');
+      }
       page += 1;
     } while (page <= lastPage);
     return orders;
+  }
+
+  function reconcilePfsOrderLists(pendingOrders, allValidatedOrders) {
+    const byId = new Map();
+    // 总列表读取较晚：同一订单若已上传或状态改变，以较新的记录为准。
+    for (const order of [...pendingOrders, ...allValidatedOrders]) {
+      const id = clean(order?.id);
+      if (!id) throw new Error('PFS订单列表缺少订单ID，未完成核对，请重新扫描');
+      byId.set(id, order);
+    }
+    for (const order of byId.values()) {
+      if (order.status === 'VALIDATED' && ![0, '0', false, 1, '1', true].includes(order.has_invoice)) {
+        throw new Error(`PFS订单 ${clean(order.order_no) || order.id} 的发票上传状态不明确，请检查后重新扫描`);
+      }
+    }
+    return [...byId.values()].filter(pfsListOrderEligible);
+  }
+
+  async function pfsPendingInvoiceOrders() {
+    const pendingOrders = await pfsReadOrderList({ status: 'VALIDATED', billed: false });
+    // 不携带 billed 筛选，核对全部已确认订单，补上专区漏列的未上传发票订单。
+    const allValidatedOrders = await pfsReadOrderList({ status: 'VALIDATED' });
+    return reconcilePfsOrderLists(pendingOrders, allValidatedOrders);
   }
 
   async function mapWithConcurrency(values, concurrency, mapper) {
